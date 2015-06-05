@@ -1,9 +1,9 @@
 (function()
 {
   freeboard.loadDatasourcePlugin({
-      "type_name"   : "ros",
-      "display_name": "ROS",
-      "description" : "Robot Operating System (rosbridge)",
+      "type_name"   : "ros_sub",
+      "display_name": "ROS Subscriber",
+      "description" : "Subscribe to ROS topics through rosbridge",
       // **external_scripts** : Any external scripts that should be loaded before the plugin instance is created.
       "external_scripts" : [
         "http://cdn.robotwebtools.org/EventEmitter2/current/eventemitter2.min.js",
@@ -15,23 +15,23 @@
           "display_name" : "rosbridge Server",
           "type"         : "text",
           "default_value": "localhost",
-          "description"  : "rosbridge Server",
+          "description"  : "Hostname of rosbridge Server",
                   "required" : true
         },        
         {
           "name"         : "topic",
-          "display_name" : "topic",
+          "display_name" : "Topic",
           "type"         : "text",
           "default_value": "",
-          "description"  : "ROS topic",
+          "description"  : "ROS Topic to Subscribe",
                   "required" : true
         },        
         {
           "name"         : "port",
-          "display_name" : "Port",
+          "display_name" : "rosbridge Port",
           "type"         : "number",
           "default_value": 9090,
-          "description"  : "server port",
+          "description"  : "Port number of rosbridge server",
                   "required" : true
         },
         {
@@ -49,7 +49,7 @@
       newInstance   : function(settings, newInstanceCallback, updateCallback)
       {
         // myDatasourcePlugin is defined below.
-        newInstanceCallback(new rossrc(settings, updateCallback));
+        newInstanceCallback(new rossubInstance(settings, updateCallback));
       }
     });
 
@@ -58,17 +58,88 @@
     //
     // -------------------
     // Here we implement the actual datasource plugin. We pass in the settings and updateCallback.
-    var rossrc = function(settings, updateCallback)
+    var rossubInstance = function(settings, updateCallback)
     {
       var self = this;
 
-      // Good idea to create a variable to hold on to our settings, because they might change in the future. See below.
       var currentSettings = settings;
       var updateTimer = null;
 
-      var rosbridge_url = 'ws://' + currentSettings.server + ':' + currentSettings.port;
+      var rosbridge_url;
       var connected = false;
+      var subscribed = false;
+      var ros;
+      var listener;
       var data;
+
+      function connectRos()
+      {
+        if (connected) return;
+        rosbridge_url = 'ws://' + currentSettings.server + ':' + currentSettings.port;
+        console.log('[ros] Attempting to connect to ', rosbridge_url);
+
+        
+        ros = new ROSLIB.Ros({
+          url : rosbridge_url
+        });
+
+
+        ros.on('connection', function() {
+          connected = true;
+          console.log('[ros] Connected to rosbridge server.');
+        });
+
+        ros.on('error', function(error) {
+          // TODO: Communicate error to the UI
+          connected = false;
+          console.error('[ros] Error connecting to rosbridge server: ', error);
+        });
+
+        ros.on('close', function() {
+          connected = false;
+          console.log('[ros] Connection to rosbridge server closed.');
+        });
+        
+        console.log('[ros] Exiting connect()')
+      }
+
+      function disconnectRos()
+      {
+        if (connected)
+        {
+          console.log('[ros] Closing connection to ', rosbridge_url);
+          ros.close();
+          connected = false;
+        }
+      }
+
+      function subscribeRos()
+      {
+        console.log('[ros] Subscribing to ', currentSettings.topic);
+        listener = new ROSLIB.Topic({
+          ros : ros,
+          name : currentSettings.topic
+          // No message type is intentional
+        });
+
+        listener.subscribe(function(message) {
+          if (!subscribed)
+          {
+            console.log('[ros] Message received on ', listener.name);
+            subscribed = true;  
+          }
+          data = message;
+        });
+      }
+
+      function unsubscribeRos()
+      {
+        if (subscribed)
+        {
+          console.log('[ros] Unsubscribing from', listener.name);
+          listener.unsubscribe();
+        }
+      }
 
       function updateRefresh(refreshTime) {
         if (updateTimer) {
@@ -78,75 +149,47 @@
         updateTimer = setInterval(function () {
           self.updateNow();
           }, refreshTime);
-      }
-
-      updateRefresh(currentSettings.refresh * 1000);
-
-      console.log('[ros] Attempting to connect to ', rosbridge_url);
-
-      var ros = new ROSLIB.Ros({
-        url : rosbridge_url
-      });
-
-      ros.on('connection', function() {
-        connected = true;
-        console.log('Connected to websocket server.');
-      });
-
-      ros.on('error', function(error) {
-        console.log('Error connecting to websocket server: ', error);
-      });
-
-      ros.on('close', function() {
-        console.log('Connection to websocket server closed.');
-      });
-      
-      var listener = new ROSLIB.Topic({
-        ros : ros,
-        name : currentSettings.topic//,
-        //messageType : 'std_msgs/String'
-      });
-
-      listener.subscribe(function(message) {
-        console.log('Received message on ' + listener.name + ': ' + JSON.stringify(message));
-        //listener.unsubscribe();
-        data = message;
-      });
-      
+      }      
+    
       function getData()
       {
-        console.log("getData");
         if (connected)
         {
-          console.log("Sending");
           updateCallback(data);
         }
-       // var conn = skynet.createConnection({
-       //    "uuid": currentSettings.uuid,
-       //    "token": currentSettings.token,
-       //    "server": currentSettings.server, 
-       //    "port": currentSettings.port
-       //      }); 
-         
-       //   conn.on('ready', function(data){ 
-
-       //    conn.on('message', function(message){
-
-       //        var newData = message;
-       //        updateCallback(newData);
-
-       //         });
-
-       //   });
-        }
-
-    
+      }
 
       // **onSettingsChanged(newSettings)** (required) : A public function we must implement that will be called when a user makes a change to the settings.
       self.onSettingsChanged = function(newSettings)
       {
+        console.log("New settings.");
         // Here we update our current settings with the variable that is passed in.
+        oldSettings = currentSettings;
         currentSettings = newSettings;
+        
+        if (
+          connected && 
+          (
+            newSettings.server !== oldSettings.server || 
+            newSettings.port !== oldSettings.port))
+        {
+          unsubscribeRos
+          disconnectRos();
+          connectRos();
+          subscribeRos();
+        }
+        else if (subscribed && newSettings.topic !== oldSettings.topic) 
+        {
+          unsubscribeRos();
+          subscribeRos();
+        };
+
+        // if (subscribed)
+        // {
+        //   unsubscribe();
+        // }
+
+        
         updateRefresh(currentSettings.refresh * 1000);
       }
 
@@ -162,11 +205,14 @@
       {
         clearInterval(updateTimer);
         updateTimer = null;
+        unsubscribeRos();
+        disconnectRos();
         //conn.close();
       }
 
-      // Here we call createRefreshTimer with our current settings, to kick things off, initially. Notice how we make use of one of the user defined settings that we setup earlier.
-    //  createRefreshTimer(currentSettings.refresh_time);
+      connectRos();
+      updateRefresh(currentSettings.refresh * 1000);
+      subscribeRos();
     }
 
 }());
