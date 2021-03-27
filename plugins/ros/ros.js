@@ -6,8 +6,8 @@
       "description" : "Subscribe to ROS topics through rosbridge",
       // **external_scripts** : Any external scripts that should be loaded before the plugin instance is created.
       "external_scripts" : [
-        "http://cdn.robotwebtools.org/EventEmitter2/current/eventemitter2.min.js",
-        "http://cdn.robotwebtools.org/roslibjs/current/roslib.min.js"
+        "https://static.robotwebtools.org/EventEmitter2/current/eventemitter2.min.js",
+        "https://static.robotwebtools.org/roslibjs/current/roslib.min.js"
       ],
       "settings"    : [
         {
